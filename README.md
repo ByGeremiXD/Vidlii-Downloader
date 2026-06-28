@@ -1,4 +1,4 @@
-# Descargador de VidLii - Manual de Usuario
+# Vidlii Downloader
 
 Este es un script de utilidad diseñado para descargar de forma automática videos de la plataforma **VidLii**, permitiendo bajar tanto videos individuales como todos los videos subidos a un canal completo.
 
@@ -42,8 +42,8 @@ python vidlii_downloader.py https://www.vidlii.com/user/ByGeremiXD
 ## Ejemplos de entradas soportadas
 El script es muy inteligente para procesar tus entradas. Puedes introducir:
 
-* **Video por URL completa**: `https://www.vidlii.com/watch?v=JILodGBCuxd`
-* **Video por ID directo**: `JILodGBCuxd`
+* **Video por URL completa**: `https://www.vidlii.com/watch?v=VIDEO_ID`
+* **Video por ID directo**: `VIDEO_ID`
 * **Canal por URL completa**: `https://www.vidlii.com/user/ByGeremiXD` o `https://www.vidlii.com/user/ByGeremiXD/videos`
 * **Canal por nombre de usuario**: `ByGeremiXD`
 
