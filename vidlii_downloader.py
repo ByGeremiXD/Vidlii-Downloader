@@ -5,6 +5,8 @@ import time
 import urllib.request
 import urllib.error
 import html
+import json
+import urllib.parse
 
 # Reconfigurar salida estándar para UTF-8 si está disponible
 if hasattr(sys.stdout, 'reconfigure'):
@@ -170,50 +172,90 @@ def get_video_info(video_id):
 def get_channel_videos(username):
     """Escanea el canal y extrae todos los IDs de videos utilizando paginación"""
     log_info(f"Escaneando videos del canal de {COLOR_BOLD}{username}{COLOR_RESET}...")
-    video_ids = []
-    page = 1
-    previous_page_vids = []
     
+    # 1. Obtener la página principal del canal para resolver el ID de canal e identificar si existe
+    channel_url = f"https://www.vidlii.com/user/{username}"
+    req_channel = urllib.request.Request(channel_url, headers=HTTP_HEADERS)
+    try:
+        with urllib.request.urlopen(req_channel, timeout=10) as res:
+            final_url = res.geturl()
+            # Si redirige a la página de inicio, el canal no existe
+            if final_url.strip('/') == "https://www.vidlii.com":
+                log_error(f"El canal/usuario '{username}' no existe (redireccionado al inicio).")
+                return []
+            html_content = res.read().decode('utf-8', errors='ignore')
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            log_error(f"El canal/usuario '{username}' no existe o no se pudo acceder a él (Error 404).")
+        else:
+            log_error(f"Error HTTP al acceder al canal: {e}")
+        return []
+    except Exception as e:
+        log_error(f"Error al conectar con el canal de '{username}': {e}")
+        return []
+
+    # 2. Buscar el ID interno de canal en el HTML de la página
+    channel_id = username
+    ch_user_match = re.search(r'id="ch_user">(.*?)</div>', html_content)
+    if ch_user_match:
+        channel_id = ch_user_match.group(1).strip()
+    else:
+        feed_match = re.search(r'/api/feed/channel/([a-zA-Z0-9_-]+)/videos\.xml', html_content)
+        if feed_match:
+            channel_id = feed_match.group(1)
+
+    log_info(f"ID interno de canal identificado: {channel_id}")
+    
+    video_ids = []
+    cursor_ts = None
+    ajax_headers = HTTP_HEADERS.copy()
+    ajax_headers['X-Requested-With'] = 'XMLHttpRequest'
+    
+    # 3. Escanear videos mediante peticiones paginadas al endpoint AJAX
     while True:
-        url = f"https://www.vidlii.com/user/{username}/videos?p={page}"
-        req = urllib.request.Request(url, headers=HTTP_HEADERS)
+        params = {
+            'user': channel_id,
+            'includeUploads': 'true',
+            'uploadsLimit': '100'
+        }
+        if cursor_ts:
+            params['cursorTs'] = cursor_ts
+            params['uploadsBefore'] = cursor_ts
+            params['uploadsOrder'] = 'createdOn DESC'
+            
+        url = f"https://www.vidlii.com/ajax/get_channel_cards?{urllib.parse.urlencode(params)}"
+        req = urllib.request.Request(url, headers=ajax_headers)
         try:
             with urllib.request.urlopen(req, timeout=10) as res:
-                html_content = res.read().decode('utf-8', errors='ignore')
+                data = json.loads(res.read().decode('utf-8'))
                 
-                # Extraer todos los watch?v=VIDEO_ID del listado de videos
-                page_vids = re.findall(r'href="/watch\?v=([a-zA-Z0-9_-]+)"', html_content)
-                page_vids_uniq = list(dict.fromkeys(page_vids))
-                
-                # Criterio de parada: página vacía o lista de videos idéntica a la anterior
-                if not page_vids_uniq or page_vids_uniq == previous_page_vids:
+                if not data.get('success') or 'data' not in data or 'uploads' not in data['data']:
                     break
-                    
-                # Agregar nuevos videos encontrados
-                new_vids = [v for v in page_vids_uniq if v not in video_ids]
+                
+                uploads = data['data']['uploads']
+                items = uploads.get('items', [])
+                if not items:
+                    break
+                
+                page_vids = [item['id'] for item in items if 'id' in item]
+                new_vids = [v for v in page_vids if v not in video_ids]
+                
                 if not new_vids:
-                    # Si no hay videos nuevos en esta página, detenemos
                     break
                     
                 video_ids.extend(new_vids)
-                log_info(f"Página {page}: Encontrados {len(new_vids)} videos nuevos (Total acumulado: {len(video_ids)})")
+                log_info(f"Encontrados {len(new_vids)} videos nuevos (Total acumulado: {len(video_ids)})")
                 
-                previous_page_vids = page_vids_uniq
-                page += 1
-                
-                # Pequeña pausa de cortesía para no saturar al servidor
+                if len(video_ids) >= uploads.get('total', 0) or len(items) < 100:
+                    break
+                    
+                cursor_ts = items[-1].get('createdOn')
+                if not cursor_ts:
+                    break
+                    
                 time.sleep(0.5)
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                # Si devuelve 404, significa que no existen más páginas de videos o el usuario no existe
-                if page == 1:
-                    log_error(f"El canal/usuario '{username}' no existe o no se pudo acceder a él (Error 404).")
-                break
-            else:
-                log_error(f"Error HTTP en página {page}: {e}")
-                break
         except Exception as e:
-            log_error(f"Error al escanear la página {page}: {e}")
+            log_error(f"Error al escanear videos del canal: {e}")
             break
             
     return video_ids
